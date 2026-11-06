@@ -39,12 +39,45 @@ Parameters:
     Description: API stage.
   EnvDomainName:
     Type: String
-    Default: dev-data.bcparks.ca
-  DomainCertificateArn:
+    Default: ''
+    Description: (Optional) Custom domain name for this environment (e.g., dev-data.bcparks.ca, data.bcparks.ca). Leave empty to use CloudFront default domain.
+  CreateCertificate:
     Type: String
-    Default: arn:aws:acm:us-east-1:970582042516:certificate/ef1d2666-8278-4d20-bdff-e27b55b3246f
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: Whether to create a new ACM certificate or use an existing one. Set to 'false' if certificate already exists or not using custom domain.
+  ExistingCertificateArn:
+    Type: String
+    Default: ''
+    Description: (Optional) ARN of existing ACM certificate in us-east-1. Only used if CreateCertificate is 'false' and EnvDomainName is set.
+  HostedZoneId:
+    Type: String
+    Default: ''
+    Description: Route53 Hosted Zone ID for DNS validation of the certificate. Required if CreateCertificate is 'true'.
+
+Conditions:
+  ShouldCreateCertificate: !Equals [!Ref CreateCertificate, 'true']
+  UseCustomDomain: !Not [!Equals [!Ref EnvDomainName, '']]
 
 Resources:
+  # ACM Certificate must be in us-east-1 for CloudFront
+  Certificate:
+    Type: AWS::CertificateManager::Certificate
+    Condition: ShouldCreateCertificate
+    Properties:
+      DomainName: !Ref EnvDomainName
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Ref EnvDomainName
+          HostedZoneId: !Ref HostedZoneId
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-certificate
+        - Key: Environment
+          Value: !Ref Env
+
   CloudFrontOriginAccessIdentity:
     Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
     Properties:
@@ -73,6 +106,29 @@ Resources:
           QueryStringsConfig:
             QueryStringBehavior: all
 
+  # CloudFront Function to rewrite /api/* to /* for API Gateway
+  ApiUrlRewriteFunction:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: !Sub ${AWS::StackName}-api-rewrite
+      AutoPublish: true
+      FunctionCode: |
+        function handler(event) {
+          var request = event.request;
+          // Rewrite /api/* to /* for API Gateway
+          request.uri = request.uri.replace(/^\/api/, '');
+          return request;
+        }
+      FunctionConfig:
+        Comment: Rewrites /api/* paths to /* for API Gateway origin
+        Runtime: cloudfront-js-1.0
+
+  # NOTE: Lambda@Edge solution removed due to SAM cross-region deployment limitations
+  # Lambda@Edge functions must be in us-east-1, but SAM deploys to ca-central-1
+  # ISSUE: CloudFront custom error responses catch API Gateway 403/404 errors
+  # and return HTML instead of JSON. This affects API authentication failures.
+  # WORKAROUND: Frontend should handle HTML responses gracefully or retry.
+
   CloudFrontDistribution:
     Type: AWS::CloudFront::Distribution
     Properties:
@@ -87,15 +143,24 @@ Resources:
           - ErrorCode: 404
             ResponseCode: 200
             ResponsePagePath: !Sub /${BaseHref}index.html
+            ErrorCachingMinTTL: 0
           - ErrorCode: 403
             ResponseCode: 200
             ResponsePagePath: !Sub /${BaseHref}index.html
-        Aliases:
-          - !Ref EnvDomainName
-        ViewerCertificate:
-          AcmCertificateArn: !Ref DomainCertificateArn
-          SslSupportMethod: sni-only
-          MinimumProtocolVersion: TLSv1
+            ErrorCachingMinTTL: 0
+        Aliases: !If
+          - UseCustomDomain
+          - [!Ref EnvDomainName]
+          - !Ref AWS::NoValue
+        ViewerCertificate: !If
+          - UseCustomDomain
+          - AcmCertificateArn: !If
+              - ShouldCreateCertificate
+              - !Ref Certificate
+              - !Ref ExistingCertificateArn
+            SslSupportMethod: sni-only
+            MinimumProtocolVersion: TLSv1
+          - CloudFrontDefaultCertificate: true
         Comment: !Sub "CloudFront distribution for ${AWS::StackName}"
         DefaultRootObject: !Sub ${BaseHref}index.html
         Enabled: true
@@ -110,6 +175,7 @@ Resources:
             OriginPath: !Sub /${DistOriginPath}
           - Id: !Sub ${ApiGatewayId}
             DomainName: !Sub "${ApiGatewayId}.execute-api.${AWSRegion}.amazonaws.com"
+            OriginPath: !Sub /${ApiStage}
             CustomOriginConfig:
               HTTPSPort: 443
               OriginProtocolPolicy: https-only
@@ -130,7 +196,7 @@ Resources:
           # Simple CORS
           ResponseHeadersPolicyId: 60669652-455b-4ae9-85a4-c4c02393f86c
         CacheBehaviors:
-          - PathPattern: !Sub /${ApiStage}/*
+          - PathPattern: /api/*
             AllowedMethods:
               - GET
               - HEAD
@@ -145,6 +211,9 @@ Resources:
             ViewerProtocolPolicy: redirect-to-https
             # Simple CORS
             ResponseHeadersPolicyId: 60669652-455b-4ae9-85a4-c4c02393f86c
+            FunctionAssociations:
+              - EventType: viewer-request
+                FunctionARN: !GetAtt ApiUrlRewriteFunction.FunctionMetadata.FunctionARN
           - PathPattern: !Sub ${BaseHref}*
             Compress: true
             AllowedMethods:
@@ -165,7 +234,7 @@ Resources:
   DistS3Bucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Sub ${AWS::StackName}-${Env}
+      BucketName: !Sub ${ProjectName}-${Env}
 
   DistS3BucketPolicy:
     Type: AWS::S3::BucketPolicy
@@ -205,3 +274,6 @@ Outputs:
   # https://github.com/awslabs/serverless-application-model/blob/master/docs/internals/generated_resources.rst#api
   Website:
     Value: !GetAtt CloudFrontDistribution.DomainName
+  CloudFrontDistributionId:
+    Description: CloudFront Distribution ID
+    Value: !Ref CloudFrontDistribution

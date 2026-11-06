@@ -32,3 +32,57 @@ warm_containers = "EAGER"
 
 [default.local_start_lambda.parameters]
 warm_containers = "EAGER"
+
+[lza-test]
+[lza-test.global.parameters]
+stack_name = "pdr-api-lza-test"
+
+[lza-test.deploy.parameters]
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = true
+resolve_s3 = true
+s3_prefix = "pdr-api"
+region = "ca-central-1"
+image_repositories = []
+parameter_overrides = [
+  "Env=lza-test",
+  "OpenSearchSecondaryDomainName=pdr-opensearch",
+  "TableNameRegister=NameRegister-lza-test",
+  "TableNameAudit=Audit-lza-test"
+]
+
+[lza-dev]
+[lza-dev.global.parameters]
+stack_name = "pdr-api-lza-dev"
+
+[lza-dev.deploy.parameters]
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = true
+resolve_s3 = true
+s3_prefix = "pdr-api"
+region = "ca-central-1"
+image_repositories = []
+parameter_overrides = [
+  "Env=lza-dev",
+  "OpenSearchSecondaryDomainName=pdr-opensearch",
+  "TableNameRegister=NameRegister-lza-dev",
+  "TableNameAudit=Audit-lza-dev"
+]
+
+[lza-prod]
+[lza-prod.global.parameters]
+stack_name = "pdr-api-lza-prod"
+
+[lza-prod.deploy.parameters]
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = true
+resolve_s3 = true
+s3_prefix = "pdr-api"
+region = "ca-central-1"
+image_repositories = []
+parameter_overrides = [
+  "Env=lza-prod",
+  "OpenSearchSecondaryDomainName=pdr-opensearch",
+  "TableNameRegister=NameRegister-lza-prod",
+  "TableNameAudit=Audit-lza-prod"
+]

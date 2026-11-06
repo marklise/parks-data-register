@@ -1,11 +1,11 @@
-name: Deploy PDR-API Dev
+name: Deploy PDR-API LZA Prod
 
-run-name: Deploying ${{ github.ref_name }} (API) to dev
+run-name: Deploying ${{ github.ref_name }} (API) to lza-prod
 
 on:
   push:
-    branches: [main]
-    paths: "pdr-api/**"
+    tags:
+      - 'v*'
   workflow_dispatch:
 
 permissions:
@@ -15,11 +15,11 @@ permissions:
 jobs:
   deploy-api:
     runs-on: ubuntu-latest
-    environment: dev
+    environment: lza-prod
     strategy:
       max-parallel: 1
       matrix:
-        node-version: [18.x]
+        node-version: [20.x]
     defaults:
       run:
         working-directory: "./${{ vars.PDR_API_DIRECTORY }}"
@@ -27,12 +27,6 @@ jobs:
       ### Checkout GitHub Repo
       - name: Checkout repo
         uses: actions/checkout@v3
-
-      - shell: bash
-        env:
-          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
-        run: |
-          curl -X POST -H 'Content-Type: application/json' $WEBHOOK_URL --data '{"text":"Data Register Deploy API Dev"}'
 
       ### Setup AWS SAM
       - name: Setup AWS SAM
@@ -66,19 +60,14 @@ jobs:
         env:
           STACK_NAME: ${{ vars.PDR_API_STACK_NAME }}
           STAGE: ${{ vars.PDR_API_STAGE }}
+          ENV: ${{ vars.ENVIRONMENT_STAGE }}
           SSO_ISSUER: ${{ vars.SSO_ISSUER }}
           SSO_JWKSURI: ${{ vars.SSO_JWKSURI }}
           KMS_KEY_ARN: ${{ vars.KMS_KEY_ARN }}
-          VPC_SG: ${{ vars.VPC_SG }}
-          VPC_SUBNET: ${{ vars.VPC_SUBNET }}
           ACCT_ID: ${{ vars.ACCT_ID }}
           EBS_IOPS: ${{ vars.EBS_IOPS }}
+          OPENSEARCH_DOMAIN: ${{ vars.OPENSEARCH_DOMAIN_NAME }}
+          TABLE_REGISTER: ${{ vars.TABLE_NAME_REGISTER }}
+          TABLE_AUDIT: ${{ vars.TABLE_NAME_AUDIT }}
         run: |
-          sam deploy --stack-name $STACK_NAME --no-confirm-changeset --no-fail-on-empty-changeset --parameter-overrides "Stage=$STAGE" "SSOIssuerUrl=$SSO_ISSUER" "SSOJWKSUri=$SSO_JWKSURI" "KMSKeyId=$KMS_KEY_ARN" "SecurityGroupId=$VPC_SG" "SubnetId=$VPC_SUBNET" "AccountId=$ACCT_ID" "EBSIops=$EBS_IOPS"
-
-      - shell: bash
-        env:
-          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
-        run: |
-          curl -X POST -H 'Content-Type: application/json' $WEBHOOK_URL --data '{"text":"Data Register - Deploy API Dev Complete"}'
-      
+          sam deploy --config-env lza-prod --no-confirm-changeset --no-fail-on-empty-changeset --parameter-overrides "Stage=$STAGE" "Env=$ENV" "SSOIssuerUrl=$SSO_ISSUER" "SSOJWKSUri=$SSO_JWKSURI" "KMSKeyId=$KMS_KEY_ARN" "AccountId=$ACCT_ID" "EBSIops=$EBS_IOPS" "OpenSearchSecondaryDomainName=$OPENSEARCH_DOMAIN" "TableNameRegister=$TABLE_REGISTER" "TableNameAudit=$TABLE_AUDIT"
